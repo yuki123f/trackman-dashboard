@@ -327,7 +327,7 @@
 
     <div class="panel">
       <h2>クラブ別平均</h2>
-      <p class="sub">選択中のクラブ・期間での平均キャリー距離(ヤード)</p>
+      <p class="sub">選択中のクラブ・期間での平均飛距離(ヤード)。濃い色=キャリー、薄い色=トータル</p>
       <div class="chart-svg-wrap" id="clubBarChart"></div>
     </div>
 
@@ -470,7 +470,8 @@ function renderStats(data){
   const items = [
     {k:'ショット数', v: data.length, unit:''},
     {k:'平均キャリー', v: fmt(avg(data,'Carry')), unit:'yd'},
-    {k:'平均ボール速度', v: fmt(avg(data,'BallSpeed')), unit:'mph'},
+    {k:'平均トータル', v: fmt(avg(data,'Total')), unit:'yd'},
+    {k:'平均ヘッドスピード', v: fmt(avg(data,'ClubSpeed')), unit:'mph'},
     {k:'平均スマッシュ係数', v: fmt(avg(data,'SmashFactor'),2), unit:''},
     {k:'平均スピン量', v: fmt(avg(data,'SpinRate'),0), unit:'rpm'},
   ];
@@ -538,14 +539,16 @@ function niceStep(maxVal){
 function renderBarChart(data){
   const container = $('#clubBarChart');
   const clubs = [...activeClubs].filter(c=>clubsPresent.includes(c)).sort((a,b)=>clubsPresent.indexOf(a)-clubsPresent.indexOf(b));
-  const values = clubs.map(c=>avg(data.filter(r=>r.Club===c),'Carry'));
-  if(!clubs.length || values.every(v=>v===null)){
+  const carryValues = clubs.map(c=>avg(data.filter(r=>r.Club===c),'Carry'));
+  const totalValues = clubs.map(c=>avg(data.filter(r=>r.Club===c),'Total'));
+  if(!clubs.length || (carryValues.every(v=>v===null) && totalValues.every(v=>v===null))){
     container.innerHTML = `<div class="empty">表示できるデータがありません</div>`;
     return;
   }
   const W = 520, H = 300, padL = 40, padB = 34, padT = 16, padR = 10;
   const plotW = W - padL - padR, plotH = H - padT - padB;
-  const maxVal = Math.max(...values.filter(v=>v!==null)) * 1.15;
+  const allVals = [...carryValues, ...totalValues].filter(v=>v!==null);
+  const maxVal = Math.max(...allVals) * 1.15;
   const step = niceStep(maxVal);
   const niceMax = Math.ceil(maxVal/step)*step;
 
@@ -555,22 +558,33 @@ function renderBarChart(data){
     parts.push(`<line x1="${padL}" y1="${gy}" x2="${W-padR}" y2="${gy}" stroke="#2a2f34" stroke-width="1"/>`);
     parts.push(`<text x="${padL-8}" y="${gy+3}" fill="#8b9198" font-size="10" font-family="IBM Plex Mono, monospace" text-anchor="end">${Math.round(gv)}</text>`);
   }
-  const bw = Math.min(46, plotW/clubs.length*0.55);
   const slot = plotW/clubs.length;
+  const groupW = Math.min(52, slot*0.62);
+  const bw = groupW/2 - 1.5;
   clubs.forEach((c,i)=>{
-    const v = values[i];
-    const bx = padL + slot*i + (slot-bw)/2;
-    const bh = v===null ? 0 : (v/niceMax)*plotH;
-    const by = padT + plotH - bh;
-    if(v!==null){
-      parts.push(`<rect x="${bx.toFixed(1)}" y="${by.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="4" fill="${CLUB_COLOR[c]}"><title>${c}: ${fmt(v)} yd</title></rect>`);
-      parts.push(`<text x="${(bx+bw/2).toFixed(1)}" y="${(by-6).toFixed(1)}" fill="#eef0ea" font-size="11" font-family="IBM Plex Mono, monospace" text-anchor="middle">${fmt(v,0)}</text>`);
+    const cv = carryValues[i];
+    const tv = totalValues[i];
+    const groupX = padL + slot*i + (slot-groupW)/2;
+    const color = CLUB_COLOR[c];
+    const lightColor = hexLerp(color, '#ffffff', 0.55);
+    if(cv!==null){
+      const bh = (cv/niceMax)*plotH;
+      const by = padT + plotH - bh;
+      parts.push(`<rect x="${groupX.toFixed(1)}" y="${by.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="3" fill="${color}"><title>${c} キャリー: ${fmt(cv)} yd</title></rect>`);
+      parts.push(`<text x="${(groupX+bw/2).toFixed(1)}" y="${(by-5).toFixed(1)}" fill="#eef0ea" font-size="9.5" font-family="IBM Plex Mono, monospace" text-anchor="middle">${fmt(cv,0)}</text>`);
     }
-    parts.push(`<text x="${(bx+bw/2).toFixed(1)}" y="${H-padB+16}" fill="#8b9198" font-size="11" text-anchor="middle">${CLUB_LABEL[c]||c}</text>`);
+    if(tv!==null){
+      const bx2 = groupX + bw + 3;
+      const bh2 = (tv/niceMax)*plotH;
+      const by2 = padT + plotH - bh2;
+      parts.push(`<rect x="${bx2.toFixed(1)}" y="${by2.toFixed(1)}" width="${bw.toFixed(1)}" height="${bh2.toFixed(1)}" rx="3" fill="${lightColor}"><title>${c} トータル: ${fmt(tv)} yd</title></rect>`);
+      parts.push(`<text x="${(bx2+bw/2).toFixed(1)}" y="${(by2-5).toFixed(1)}" fill="#8b9198" font-size="9.5" font-family="IBM Plex Mono, monospace" text-anchor="middle">${fmt(tv,0)}</text>`);
+    }
+    parts.push(`<text x="${(groupX+groupW/2).toFixed(1)}" y="${H-padB+16}" fill="#8b9198" font-size="11" text-anchor="middle">${CLUB_LABEL[c]||c}</text>`);
   });
   parts.push(`<line x1="${padL}" y1="${padT+plotH}" x2="${W-padR}" y2="${padT+plotH}" stroke="#3a4046" stroke-width="1"/>`);
 
-  container.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="クラブ別平均キャリー距離">${parts.join('')}</svg>`;
+  container.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="クラブ別平均キャリー・トータル距離">${parts.join('')}</svg>`;
 }
 
 function renderTrendChart(data){
