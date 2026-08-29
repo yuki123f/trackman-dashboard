@@ -300,6 +300,7 @@
         <input type="date" id="dateTo">
       </div>
       <div class="quick-ranges" id="quickRanges">
+        <button data-range="today">最新の1回</button>
         <button data-range="7">直近7日</button>
         <button data-range="30">直近30日</button>
         <button data-range="all" class="active">全期間</button>
@@ -444,6 +445,10 @@ document.querySelectorAll('#quickRanges button').forEach(btn=>{
     btn.classList.add('active');
     const r = btn.dataset.range;
     if(r==='all'){ dateFrom.value = minDate; dateTo.value = maxDate; }
+    else if(r==='today'){
+      dateFrom.value = maxDate;
+      dateTo.value = maxDate;
+    }
     else {
       const days = parseInt(r,10);
       const end = new Date(maxDate+'T00:00:00');
