@@ -300,9 +300,9 @@
         <input type="date" id="dateTo">
       </div>
       <div class="quick-ranges" id="quickRanges">
-        <button data-range="today">最新の1回</button>
-        <button data-range="7">直近7日</button>
-        <button data-range="30">直近30日</button>
+        <button data-range="today">前回</button>
+        <button data-range="7">直近7回</button>
+        <button data-range="30">直近30回</button>
         <button data-range="all" class="active">全期間</button>
       </div>
     </div>
@@ -400,6 +400,35 @@ function stdev(arr, key){
   const variance = v.reduce((a,b)=>a+(b-m)*(b-m),0)/v.length;
   return Math.sqrt(variance);
 }
+
+// 同じ日でも、ショット間の時間差がこれを超えたら別セッション(別回)とみなす
+const SESSION_GAP_MS = 2 * 60 * 60 * 1000; // 2時間
+
+// RAW中の各ショットに SessionId を付与し、時系列順のセッションID一覧を返す
+function computeSessions(rows){
+  const byDate = {};
+  rows.forEach(r=>{ (byDate[r.Date] = byDate[r.Date] || []).push(r); });
+
+  const sessions = [];
+  Object.keys(byDate).sort().forEach(date=>{
+    const shots = byDate[date].slice().sort((a,b)=>(a.TimeMs ?? 0) - (b.TimeMs ?? 0));
+    let blockIdx = 1;
+    shots.forEach((s,i)=>{
+      if(i>0 && s.TimeMs!=null && shots[i-1].TimeMs!=null && (s.TimeMs - shots[i-1].TimeMs) > SESSION_GAP_MS){
+        blockIdx++;
+      }
+      s.SessionId = `${date}#${blockIdx}`;
+    });
+    const blocksSeen = new Set();
+    shots.forEach(s=>{
+      if(!blocksSeen.has(s.SessionId)){
+        blocksSeen.add(s.SessionId);
+        sessions.push(s.SessionId);
+      }
+    });
+  });
+  return sessions;
+}
 function fmt(n, digits=1){ return (n===null || n===undefined || isNaN(n)) ? '—' : n.toFixed(digits); }
 
 // ---- mutable app state ----
@@ -412,6 +441,8 @@ let activeClubs = new Set();
 let baysPresent = [];
 let activeBays = new Set();
 let mishitOnly = false;
+let allSessions = []; // 時系列順のSessionId一覧
+let sessionFilter = null; // null = 制限なし(日付範囲のみで絞る), Setなら該当セッションのみ
 
 const MISHIT_QUALITIES = new Set(['Fat_suspect','Thin_suspect','Shank_suspect']);
 
@@ -478,6 +509,8 @@ function initFromData(rawArray, sourceLabel){
 
   allDates = [...new Set(RAW.map(r=>r.Date))].sort();
   minDate = allDates[0]; maxDate = allDates[allDates.length-1];
+  allSessions = computeSessions(RAW);
+  sessionFilter = null;
 
   dateFrom.min = minDate; dateFrom.max = maxDate;
   dateTo.min = minDate; dateTo.max = maxDate;
@@ -485,7 +518,7 @@ function initFromData(rawArray, sourceLabel){
   document.querySelectorAll('#quickRanges button').forEach(b=>b.classList.remove('active'));
   $('#quickRanges button[data-range="all"]').classList.add('active');
 
-  $('#dateRangeSub').textContent = `${minDate} 〜 ${maxDate} · ${clubsPresent.length}クラブ · ${RAW.length}ショット記録`;
+  $('#dateRangeSub').textContent = `${minDate} 〜 ${maxDate} · ${clubsPresent.length}クラブ · ${allSessions.length}回の練習 · ${RAW.length}ショット記録`;
   if(sourceLabel) $('#dsName').textContent = sourceLabel;
 
   activeClubs = new Set(clubsPresent);
@@ -519,24 +552,30 @@ document.querySelectorAll('#quickRanges button').forEach(btn=>{
     document.querySelectorAll('#quickRanges button').forEach(b=>b.classList.remove('active'));
     btn.classList.add('active');
     const r = btn.dataset.range;
-    if(r==='all'){ dateFrom.value = minDate; dateTo.value = maxDate; }
+    if(r==='all'){
+      sessionFilter = null;
+      dateFrom.value = minDate; dateTo.value = maxDate;
+    }
     else if(r==='today'){
-      dateFrom.value = maxDate;
-      dateTo.value = maxDate;
+      const targets = allSessions.slice(-1);
+      sessionFilter = new Set(targets);
+      const targetDate = targets[0] ? targets[0].split('#')[0] : maxDate;
+      dateFrom.value = targetDate; dateTo.value = maxDate;
     }
     else {
-      const days = parseInt(r,10);
-      const end = new Date(maxDate+'T00:00:00');
-      const start = new Date(end); start.setDate(start.getDate() - (days-1));
-      const startStr = start.toISOString().slice(0,10);
-      dateFrom.value = startStr < minDate ? minDate : startStr;
-      dateTo.value = maxDate;
+      // 「回」= ユニークなセッション(練習の回)数。allSessionsは時系列順。
+      const n = parseInt(r,10);
+      const targets = allSessions.slice(-n);
+      sessionFilter = new Set(targets);
+      const firstDate = targets[0] ? targets[0].split('#')[0] : minDate;
+      dateFrom.value = firstDate; dateTo.value = maxDate;
     }
     render();
   });
 });
 [dateFrom, dateTo].forEach(inp=>inp.addEventListener('change', ()=>{
   document.querySelectorAll('#quickRanges button').forEach(b=>b.classList.remove('active'));
+  sessionFilter = null;
   render();
 }));
 
@@ -545,6 +584,7 @@ function filtered(){
   return RAW.filter(r =>
     activeClubs.has(r.Club) &&
     r.Date >= from && r.Date <= to &&
+    (sessionFilter === null || sessionFilter.has(r.SessionId)) &&
     (activeBays.size === 0 || !r.Bay || activeBays.has(r.Bay)) &&
     (!mishitOnly || MISHIT_QUALITIES.has(r.ShotQuality))
   );
@@ -812,11 +852,13 @@ function parseCSV(text){
 
 function toShot(rawRow){
   const num = v => { if(v===undefined||v==='') return null; const f = parseFloat(v); return isNaN(f) ? null : Math.round(f*100)/100; };
+  const timeMs = rawRow.Time ? Date.parse(rawRow.Time) : NaN;
   return {
     Date: rawRow.Date,
     Club: rawRow.Club,
     ShotNumber: rawRow.ShotNumber ? parseInt(rawRow.ShotNumber,10) : null,
     Bay: rawRow.Bay || '',
+    TimeMs: isNaN(timeMs) ? null : timeMs,
     ClubSpeed: num(rawRow.ClubSpeed),
     BallSpeed: num(rawRow.BallSpeed),
     SmashFactor: num(rawRow.SmashFactor),
