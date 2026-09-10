@@ -351,6 +351,20 @@
       <div class="chart-svg-wrap" id="trendChart"></div>
       <div class="legend" id="trendLegend"></div>
     </div>
+
+    <div class="panel full">
+      <h2>クラブパスの推移</h2>
+      <p class="sub">セッション日ごとの平均ClubPath(度)。点線の帯は目標レンジ(+3〜+4°)</p>
+      <div class="chart-svg-wrap" id="clubPathTrendChart"></div>
+      <div class="legend" id="clubPathTrendLegend"></div>
+    </div>
+
+    <div class="panel full">
+      <h2>フェース角の推移</h2>
+      <p class="sub">セッション日ごとの平均FaceAngle(度)。点線はスクエア(0°)基準</p>
+      <div class="chart-svg-wrap" id="faceAngleTrendChart"></div>
+      <div class="legend" id="faceAngleTrendLegend"></div>
+    </div>
   </div>
 
   <footer>すべての集計と読み込みはブラウザ内で完結しています(外部通信なし)</footer>
@@ -378,6 +392,13 @@ function avg(arr, key){
   const v = arr.map(r=>r[key]).filter(x=>x!==null && x!==undefined && !isNaN(x));
   if(!v.length) return null;
   return v.reduce((a,b)=>a+b,0)/v.length;
+}
+function stdev(arr, key){
+  const v = arr.map(r=>r[key]).filter(x=>x!==null && x!==undefined && !isNaN(x));
+  if(v.length < 2) return null;
+  const m = v.reduce((a,b)=>a+b,0)/v.length;
+  const variance = v.reduce((a,b)=>a+(b-m)*(b-m),0)/v.length;
+  return Math.sqrt(variance);
 }
 function fmt(n, digits=1){ return (n===null || n===undefined || isNaN(n)) ? '—' : n.toFixed(digits); }
 
@@ -539,6 +560,7 @@ function renderStats(data){
     {k:'平均ヘッドスピード', v: fmt(avg(data,'ClubSpeed')), unit:'mph'},
     {k:'平均スマッシュ係数', v: fmt(avg(data,'SmashFactor'),2), unit:''},
     {k:'平均スピン量', v: fmt(avg(data,'SpinRate'),0), unit:'rpm'},
+    {k:'左右ブレ(SD)', v: fmt(stdev(data,'CarrySide')), unit:'yd'},
     {k:'ミス疑い', v: mishitCount, unit:''},
   ];
   strip.innerHTML = items.map(it=>`
@@ -658,28 +680,40 @@ function renderBarChart(data){
   container.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="クラブ別平均キャリー・トータル距離">${parts.join('')}</svg>`;
 }
 
-function renderTrendChart(data){
-  const container = $('#trendChart');
+function renderMetricTrendChart(data, opts){
+  const { metric, containerId, legendId, unit, digits=1, refBand=null, refLine=null, allowNegative=false } = opts;
+  const container = $('#'+containerId);
   const dates = [...new Set(data.map(r=>r.Date))].sort();
   const clubs = [...activeClubs].filter(c=>clubsPresent.includes(c)).sort((a,b)=>clubsPresent.indexOf(a)-clubsPresent.indexOf(b));
   if(!dates.length || !clubs.length){
     container.innerHTML = `<div class="empty">表示できるデータがありません</div>`;
-    $('#trendLegend').innerHTML = '';
+    $('#'+legendId).innerHTML = '';
     return;
   }
   const series = clubs.map(c=>({
     club:c,
-    points: dates.map(d=>avg(data.filter(r=>r.Club===c && r.Date===d),'Carry'))
+    points: dates.map(d=>avg(data.filter(r=>r.Club===c && r.Date===d), metric))
   }));
   const allVals = series.flatMap(s=>s.points).filter(v=>v!==null);
-  const maxVal = Math.max(...allVals) * 1.12;
-  const minVal = Math.max(0, Math.min(...allVals) * 0.85);
+  if(!allVals.length){
+    container.innerHTML = `<div class="empty">表示できるデータがありません(${metric}が記録されていません)</div>`;
+    $('#'+legendId).innerHTML = '';
+    return;
+  }
+  const refVals = [];
+  if(refBand) refVals.push(refBand[0], refBand[1]);
+  if(refLine!==null) refVals.push(refLine);
+  const combinedVals = allVals.concat(refVals);
+  let maxVal = Math.max(...combinedVals) * (Math.max(...combinedVals) >= 0 ? 1.15 : 0.85);
+  let minVal = allowNegative
+    ? Math.min(...combinedVals) * (Math.min(...combinedVals) >= 0 ? 0.85 : 1.15)
+    : Math.max(0, Math.min(...combinedVals) * 0.85);
 
   const W = 1080, H = 320, padL = 42, padB = 40, padT = 16, padR = 16;
   const plotW = W - padL - padR, plotH = H - padT - padB;
   const step = niceStep(maxVal-minVal);
   const niceMax = Math.ceil(maxVal/step)*step;
-  const niceMin = Math.floor(minVal/step)*step;
+  const niceMin = allowNegative ? Math.floor(minVal/step)*step : Math.max(0, Math.floor(minVal/step)*step);
 
   const xFor = i => dates.length<=1 ? padL+plotW/2 : padL + (i/(dates.length-1))*plotW;
   const yFor = v => padT + plotH - ((v-niceMin)/(niceMax-niceMin || 1))*plotH;
@@ -688,7 +722,7 @@ function renderTrendChart(data){
   for(let gv=niceMin; gv<=niceMax; gv+=step){
     const gy = yFor(gv);
     parts.push(`<line x1="${padL}" y1="${gy}" x2="${W-padR}" y2="${gy}" stroke="#2a2f34" stroke-width="1"/>`);
-    parts.push(`<text x="${padL-8}" y="${gy+3}" fill="#8b9198" font-size="10" font-family="IBM Plex Mono, monospace" text-anchor="end">${Math.round(gv)}</text>`);
+    parts.push(`<text x="${padL-8}" y="${gy+3}" fill="#8b9198" font-size="10" font-family="IBM Plex Mono, monospace" text-anchor="end">${gv.toFixed(digits>0?0:0)}</text>`);
   }
   const labelEvery = Math.max(1, Math.ceil(dates.length/10));
   dates.forEach((d,i)=>{
@@ -696,6 +730,20 @@ function renderTrendChart(data){
       parts.push(`<text x="${xFor(i).toFixed(1)}" y="${H-padB+18}" fill="#8b9198" font-size="10" font-family="IBM Plex Mono, monospace" text-anchor="middle">${d.slice(5)}</text>`);
     }
   });
+
+  // reference band (e.g. target range) drawn behind everything else
+  if(refBand){
+    const y0 = yFor(refBand[0]), y1 = yFor(refBand[1]);
+    const bandTop = Math.min(y0,y1), bandH = Math.abs(y0-y1);
+    parts.unshift(`<rect x="${padL}" y="${bandTop.toFixed(1)}" width="${plotW}" height="${Math.max(bandH,1).toFixed(1)}" fill="#7fae5f" fill-opacity="0.12"/>`);
+    parts.push(`<line x1="${padL}" y1="${y0.toFixed(1)}" x2="${W-padR}" y2="${y0.toFixed(1)}" stroke="#7fae5f" stroke-width="1" stroke-dasharray="4 3"/>`);
+    parts.push(`<line x1="${padL}" y1="${y1.toFixed(1)}" x2="${W-padR}" y2="${y1.toFixed(1)}" stroke="#7fae5f" stroke-width="1" stroke-dasharray="4 3"/>`);
+    parts.push(`<text x="${W-padR}" y="${(bandTop-4).toFixed(1)}" fill="#7fae5f" font-size="10" text-anchor="end">目標 ${refBand[0]}〜${refBand[1]}${unit}</text>`);
+  }
+  if(refLine!==null){
+    const ry = yFor(refLine);
+    parts.push(`<line x1="${padL}" y1="${ry.toFixed(1)}" x2="${W-padR}" y2="${ry.toFixed(1)}" stroke="#8b9198" stroke-width="1" stroke-dasharray="4 3"/>`);
+  }
 
   series.forEach(s=>{
     const color = CLUB_COLOR[s.club];
@@ -710,14 +758,14 @@ function renderTrendChart(data){
     if(d) parts.push(`<path d="${d.trim()}" fill="none" stroke="${color}" stroke-width="2"/>`);
     s.points.forEach((v,i)=>{
       if(v===null) return;
-      parts.push(`<circle cx="${xFor(i).toFixed(1)}" cy="${yFor(v).toFixed(1)}" r="3" fill="${color}"><title>${s.club} · ${dates[i]} · ${fmt(v)}yd</title></circle>`);
+      parts.push(`<circle cx="${xFor(i).toFixed(1)}" cy="${yFor(v).toFixed(1)}" r="3" fill="${color}"><title>${s.club} · ${dates[i]} · ${fmt(v,digits)}${unit}</title></circle>`);
     });
   });
   parts.push(`<line x1="${padL}" y1="${padT+plotH}" x2="${W-padR}" y2="${padT+plotH}" stroke="#3a4046" stroke-width="1"/>`);
 
-  container.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="キャリー距離の推移">${parts.join('')}</svg>`;
+  container.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img">${parts.join('')}</svg>`;
 
-  $('#trendLegend').innerHTML = clubs.map(c=>`<div class="legend-item line"><span class="sw" style="background:${CLUB_COLOR[c]}"></span>${CLUB_LABEL[c]||c}</div>`).join('');
+  $('#'+legendId).innerHTML = clubs.map(c=>`<div class="legend-item line"><span class="sw" style="background:${CLUB_COLOR[c]}"></span>${CLUB_LABEL[c]||c}</div>`).join('');
 }
 
 function render(){
@@ -725,7 +773,9 @@ function render(){
   renderStats(data);
   renderDispersion(data);
   renderBarChart(data);
-  renderTrendChart(data);
+  renderMetricTrendChart(data, {metric:'Carry', containerId:'trendChart', legendId:'trendLegend', unit:'yd'});
+  renderMetricTrendChart(data, {metric:'ClubPath', containerId:'clubPathTrendChart', legendId:'clubPathTrendLegend', unit:'°', digits:1, allowNegative:true, refBand:[3,4]});
+  renderMetricTrendChart(data, {metric:'FaceAngle', containerId:'faceAngleTrendChart', legendId:'faceAngleTrendLegend', unit:'°', digits:1, allowNegative:true, refLine:0});
 }
 
 // ---- CSV upload / parsing ----
@@ -777,6 +827,8 @@ function toShot(rawRow){
     Total: num(rawRow.Total),
     CarrySide: num(rawRow.CarrySide),
     TotalSide: num(rawRow.TotalSide),
+    ClubPath: num(rawRow.ClubPath),
+    FaceAngle: num(rawRow.FaceAngle),
     ShotQuality: rawRow.ShotQuality || ''
   };
 }
@@ -822,6 +874,10 @@ function showEmptyState(message){
   $('#clubBarChart').innerHTML = `<div class="empty">データがありません</div>`;
   $('#trendChart').innerHTML = `<div class="empty">データがありません</div>`;
   $('#trendLegend').innerHTML = '';
+  $('#clubPathTrendChart').innerHTML = `<div class="empty">データがありません</div>`;
+  $('#clubPathTrendLegend').innerHTML = '';
+  $('#faceAngleTrendChart').innerHTML = `<div class="empty">データがありません</div>`;
+  $('#faceAngleTrendLegend').innerHTML = '';
 }
 
 async function tryLoadFromDrive(){
