@@ -285,7 +285,7 @@
 
   <div class="data-source">
     <div class="ds-label"><strong>データソース:</strong> <span id="dsName">読み込み中…</span></div>
-    <button class="upload-btn" id="driveReload" type="button">Driveから再読み込み</button>
+    <button class="upload-btn" id="driveReload" type="button">再読み込み</button>
     <label class="upload-btn" for="csvUpload">CSVを手動で読み込む</label>
     <input type="file" id="csvUpload" accept=".csv">
     <span class="ds-status" id="dsStatus"></span>
@@ -902,42 +902,25 @@ $('#csvUpload').addEventListener('change', (e)=>{
   reader.readAsText(file, 'UTF-8');
 });
 
-// ---- Google Drive auto-fetch (best effort — CORS can block this) ----
-const DRIVE_FILE_ID = '13db_6EBRoOnGLCdJZwKEwtcDXvLosX1w'; // 参考: 元のDrive上のCSVファイルID
-const DRIVE_CSV_URL = 'https://script.google.com/macros/s/AKfycbxF40-2CvKvGPWdxQFCkOZiNHcneAl29nXfSy0_S4K7Pu1UoP3t6sn37-u6GtSnWw5Whw/exec';
-
-function showEmptyState(message){
-  $('#dateRangeSub').textContent = message;
-  $('#dsName').textContent = '未読み込み';
-  $('#shotCount').textContent = '–';
-  $('#statStrip').innerHTML = '';
-  $('#dispersion').innerHTML = `<text x="280" y="310" fill="#8b9198" font-size="13" text-anchor="middle">データがありません</text>`;
-  $('#dispersionLegend').innerHTML = '';
-  $('#clubBarChart').innerHTML = `<div class="empty">データがありません</div>`;
-  $('#trendChart').innerHTML = `<div class="empty">データがありません</div>`;
-  $('#trendLegend').innerHTML = '';
-  $('#clubPathTrendChart').innerHTML = `<div class="empty">データがありません</div>`;
-  $('#clubPathTrendLegend').innerHTML = '';
-  $('#faceAngleTrendChart').innerHTML = `<div class="empty">データがありません</div>`;
-  $('#faceAngleTrendLegend').innerHTML = '';
-}
+// ---- 同じフォルダの trackman_master.csv を自動読み込み ----
+const CSV_URL = 'trackman_master.csv';
 
 async function tryLoadFromDrive(){
   const statusEl = $('#dsStatus');
-  statusEl.textContent = 'Google Driveから読み込み中…';
+  statusEl.textContent = 'CSVを読み込み中…';
   statusEl.className = 'ds-status';
   try{
-    const res = await fetch(DRIVE_CSV_URL, { mode: 'cors', cache: 'no-store' });
+    const res = await fetch(CSV_URL + '?t=' + Date.now(), { cache: 'no-store' });
     if(!res.ok) throw new Error('HTTP ' + res.status);
     const text = await res.text();
     const rows = parseCSV(text);
     const shots = rows.map(toShot).filter(s=>s.Date && s.Club);
     if(!shots.length) throw new Error('no rows parsed');
-    initFromData(shots, `Google Drive: trackman_master.csv(自動読み込み・${shots.length}ショット)`);
-    statusEl.textContent = `Google Driveから読み込みました(${new Date().toLocaleString('ja-JP')})`;
+    initFromData(shots, `trackman_master.csv(自動読み込み・${shots.length}ショット)`);
+    statusEl.textContent = `CSVを読み込みました(${new Date().toLocaleString('ja-JP')})`;
     statusEl.className = 'ds-status ok';
   }catch(err){
-    statusEl.textContent = 'Google Driveから自動読み込みできませんでした(ブラウザのセキュリティ制限の可能性)。「CSVを手動で読み込む」から読み込んでください';
+    statusEl.textContent = 'CSVを自動読み込みできませんでした。「CSVを手動で読み込む」から読み込んでください';
     statusEl.className = 'ds-status err';
     if(!RAW.length){
       showEmptyState('データ未読み込み — CSVを手動で読み込んでください');
