@@ -321,6 +321,14 @@
     </div>
 
     <div class="filter-group" style="min-width:160px;">
+      <span class="fg-label">距離(Carry/Total)</span>
+      <div class="quick-ranges" id="distMode">
+        <button data-mode="norm" class="active" title="標準条件に補正した値">正規化</button>
+        <button data-mode="raw" title="計測器の実測値">実測</button>
+      </div>
+    </div>
+
+    <div class="filter-group" style="min-width:160px;">
       <span class="fg-label">ショット判定</span>
       <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-muted);cursor:pointer;">
         <input type="checkbox" id="mishitOnly" style="accent-color:var(--flag);">
@@ -441,6 +449,7 @@ let activeClubs = new Set();
 let baysPresent = [];
 let activeBays = new Set();
 let mishitOnly = false;
+let distMode = 'norm'; // 'norm' = 正規化値 / 'raw' = 実測値
 let allSessions = []; // 時系列順のSessionId一覧
 let sessionFilter = null; // null = 制限なし(日付範囲のみで絞る), Setなら該当セッションのみ
 
@@ -497,8 +506,31 @@ function buildBayChips(){
   });
 }
 
+// Carry/Total を選択中のモードの値に差し替える(Norm列が無いCSVでは実測のみ)
+function applyDistMode(){
+  const hasNorm = RAW.some(r=>r.CarryNorm!==null);
+  const mode = hasNorm ? distMode : 'raw';
+  RAW.forEach(r=>{
+    r.Carry = mode==='norm' ? r.CarryNorm : r.CarryRaw;
+    r.Total = mode==='norm' ? r.TotalNorm : r.TotalRaw;
+  });
+  document.querySelectorAll('#distMode button').forEach(b=>{
+    b.classList.toggle('active', b.dataset.mode===mode);
+    if(b.dataset.mode==='norm') b.disabled = !hasNorm;
+  });
+}
+
+document.querySelectorAll('#distMode button').forEach(b=>{
+  b.addEventListener('click', ()=>{
+    distMode = b.dataset.mode;
+    applyDistMode();
+    render();
+  });
+});
+
 function initFromData(rawArray, sourceLabel){
   RAW = rawArray.filter(r=>r.Date && r.Club);
+  applyDistMode();
   clubsPresent = CLUB_ORDER.filter(c => RAW.some(r=>r.Club===c));
   // include any club not in known order (unexpected new club names) at the end
   const extra = [...new Set(RAW.map(r=>r.Club))].filter(c=>!clubsPresent.includes(c));
@@ -595,8 +627,8 @@ function renderStats(data){
   const mishitCount = data.filter(r=>MISHIT_QUALITIES.has(r.ShotQuality)).length;
   const items = [
     {k:'ショット数', v: data.length, unit:''},
-    {k:'平均キャリー', v: fmt(avg(data,'Carry')), unit:'yd'},
-    {k:'平均トータル', v: fmt(avg(data,'Total')), unit:'yd'},
+    {k:'平均キャリー' + (distMode==='norm' && RAW.some(r=>r.CarryNorm!==null) ? '(正規化)' : '(実測)'), v: fmt(avg(data,'Carry')), unit:'yd'},
+    {k:'平均トータル' + (distMode==='norm' && RAW.some(r=>r.CarryNorm!==null) ? '(正規化)' : '(実測)'), v: fmt(avg(data,'Total')), unit:'yd'},
     {k:'平均ヘッドスピード', v: fmt(avg(data,'ClubSpeed')), unit:'mph'},
     {k:'平均スマッシュ係数', v: fmt(avg(data,'SmashFactor'),2), unit:''},
     {k:'平均スピン量', v: fmt(avg(data,'SpinRate'),0), unit:'rpm'},
@@ -867,6 +899,10 @@ function toShot(rawRow){
     MaxHeight: num(rawRow.MaxHeight),
     Carry: num(rawRow.Carry),
     Total: num(rawRow.Total),
+    CarryRaw: num(rawRow.Carry),
+    TotalRaw: num(rawRow.Total),
+    CarryNorm: num(rawRow.Carry_Norm),
+    TotalNorm: num(rawRow.Total_Norm),
     CarrySide: num(rawRow.CarrySide),
     TotalSide: num(rawRow.TotalSide),
     ClubPath: num(rawRow.ClubPath),
